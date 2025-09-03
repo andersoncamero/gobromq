@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Funcional-brightgreen.svg)]()
 
-**GoBroMQ** es un broker MQTT ligero y de alto rendimiento escrito en Go, diseñado para conectar dispositivos IoT como controladores y otros sistemas embebidos.
+**GoBroMQ** es un broker MQTT ligero y de alto rendimiento escrito en Go, diseñado para conectar dispositivos IoT como controladores Ezlo y otros sistemas embebidos.
 
 ## ✨ Características Implementadas
 
@@ -138,25 +138,29 @@ gobromq/
 ├── cmd/
 │   └── gobromq/
 │       └── main.go              # Entry point
-├── config/
-│   └── config.go                # Configuración
 ├── internal/
+│   ├── auth/
+│   │   ├── auth.go              # Interface de autenticación
+│   │   └── simple_auth.go       # Implementación básica
 │   ├── broker/
 │   │   ├── broker.go            # Core del broker
 │   │   └── pubsub.go            # Motor Pub/Sub
 │   ├── connection/
 │   │   ├── handler.go           # Manejo de conexiones
 │   │   └── listener.go          # TCP listener
-│   ├── entities/
-│   │   ├── entities.go          # Entidades del dominio
-│   │   └── packet.go            # Estructuras de paquetes
-│   └── packet/
-│       ├── connect.go           # CONNECT/CONNACK
-│       ├── parser.go            # Parser principal
-│       ├── publish.go           # PUBLISH/PUBACK
-│       └── subscribe.go         # SUBSCRIBE/SUBACK
-├── util/
-│   └── utils.go                 # Utilidades generales
+│   ├── packet/
+│   │   ├── packet.go            # Tipos de paquetes
+│   │   ├── parser.go            # Parser principal
+│   │   ├── connect.go           # CONNECT/CONNACK
+│   │   ├── publish.go           # PUBLISH/PUBACK
+│   │   ├── subscribe.go         # SUBSCRIBE/SUBACK
+│   │   └── utils.go             # Utilidades
+│   └── types/
+│       └── types.go             # Tipos compartidos
+├── config/
+│   └── config.go                # Configuración
+├── Dockerfile                   # (pendiente)
+├── docker-compose.yml           # (pendiente)
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -191,7 +195,7 @@ Auth: AuthConfig{
 GOBROMQ_PORT=8883 ./gobromq
 
 # Host específico  
-GOBROMQ_HOST=localhost ./gobromq
+GOBROMQ_HOST=192.168.1.9 ./gobromq
 ```
 
 ## 🔧 Desarrollo
@@ -232,20 +236,19 @@ done
 
 ## 🚧 Roadmap
 
-### ✅ Completado (Pasos 1-4)
+### ✅ Completado (Pasos 1-5)
 - [x] **Estructura del proyecto** con Clean Architecture
 - [x] **TCP Listener** funcional
 - [x] **MQTT Parser** completo (CONNECT, PUBLISH, SUBSCRIBE, PING, DISCONNECT)
 - [x] **Pub/Sub Engine** con topic matching y retained messages
+- [x] **Authentication & Authorization** - Sistema completo de seguridad
 
-### 🔄 En progreso (Paso 5)
-- [ ] **Autenticación robusta** con validación de credenciales
-- [ ] **Autorización granular** por tópicos  
-- [ ] **Will messages** para clientes desconectados
-
-### 📋 Pendiente (Pasos 6+)
+### 🔄 En progreso (Paso 6)
 - [ ] **QoS 1 y 2** completos (PUBACK, PUBREC, PUBREL, PUBCOMP)
+- [ ] **Will messages** para clientes desconectados
 - [ ] **Session persistence** para clean sessions
+
+### 📋 Pendiente (Pasos 7+)
 - [ ] **Docker & Docker Compose** para deployment
 - [ ] **Unit tests** completos
 - [ ] **Benchmarks** de performance
@@ -253,6 +256,20 @@ done
 - [ ] **WebSocket** support (MQTT over WebSockets)
 - [ ] **Clustering** para alta disponibilidad
 
+## 🐛 Issues Conocidos
+
+- **Puerto 1883 ocupado:** Por defecto usa puerto 1884 debido a conflicto con Mosquitto instalado en el sistema
+- **Autenticación básica:** Solo validación simple de usuario/contraseña
+- **Sin persistencia:** Todo en memoria, se pierde al reiniciar
+- **QoS 2:** No implementado completamente
+
+## 🤝 Contribuir
+
+1. **Fork** el repositorio
+2. **Crear branch** para tu feature (`git checkout -b feature/nueva-feature`)
+3. **Commit** cambios (`git commit -am 'Agregar nueva feature'`)
+4. **Push** al branch (`git push origin feature/nueva-feature`)
+5. **Crear Pull Request**
 
 ### Estándares de código
 
@@ -262,8 +279,6 @@ done
 - **Logging** estructurado
 - **Tests unitarios** requeridos
 
-## 📄 Licencia
 
-Este proyecto está bajo la licencia **MIT**. Ver [LICENSE](LICENSE) para más detalles.
 
 **🚀 GoBroMQ** - *Conectando el futuro IoT con Go*

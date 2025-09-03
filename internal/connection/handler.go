@@ -22,6 +22,7 @@ type BrokerInterface interface {
 	HandlePublish(req *entities.PublishRequest) error
 	HandleSubscribe(req *entities.SubscribeRequest) []byte
 	GetStats() map[string]interface{}
+	AuthenticateClient(clientID string, username, password string) error
 }
 
 func NewHandler(conn net.Conn, broker BrokerInterface) *Handler {
@@ -44,9 +45,6 @@ func (h *Handler) Start() error {
 		fmt.Printf("❌ Error reading first packet from %s: %v\n", remoteAddr, err)
 		return err
 	}
-
-	fmt.Printf("📦 Received %s packet from %s (length: %d)\n",
-		entities.GetPacketTypeName(firstPacket.Type), remoteAddr, firstPacket.Length)
 
 	if firstPacket.Type != entities.CONNECT {
 		fmt.Printf("❌ First packet must be CONNECT, got %s from %s\n",
@@ -83,10 +81,31 @@ func (h *Handler) Start() error {
 		LastSeen:      time.Now(),
 	}
 
+	var authError error
+	var returnCode byte = entities.ConnectAccepted
+
+	if connectPacket.Username != "" || connectPacket.Password != "" {
+		authError = h.broker.AuthenticateClient(h.client.ID, connectPacket.Username, connectPacket.Password)
+		if authError == nil {
+			h.client.Authenticated = true
+			fmt.Printf("🔐 Client %s authenticated successfully\n", h.client.ID)
+		} else {
+			fmt.Printf("🔒 Authentication failed for client %s: %v\n", h.client.ID, authError)
+			returnCode = entities.ConnectRefusedBadCredentials
+		}
+	} else {
+		fmt.Printf("🔓 Client %s attempting anonymous connection\n", h.client.ID)
+	}
+
 	if err := h.broker.AddClient(h.client); err != nil {
 		fmt.Printf("❌ Error adding client to broker: %v\n", err)
 
-		connackData := packet.CreateConnAck(false, entities.ConnectRefusedServerUnavailable)
+		if authError != nil {
+			returnCode = entities.ConnectRefusedBadCredentials
+		} else {
+			returnCode = entities.ConnectRefusedServerUnavailable
+		}
+		connackData := packet.CreateConnAck(false, returnCode)
 		h.parser.WriteResponse(entities.CONNACK, connackData)
 		return err
 	}
@@ -97,7 +116,13 @@ func (h *Handler) Start() error {
 		return err
 	}
 
-	fmt.Printf("📤 CONNACK sent to %s\n", remoteAddr)
+	if returnCode == entities.ConnectAccepted {
+		fmt.Printf("✅ CONNACK sent to %s (client: %s) - Connection accepted\n", remoteAddr, h.client.ID)
+	} else {
+		fmt.Printf("❌ CONNACK sent to %s (client: %s) - Connection rejected (code: %d)\n",
+			remoteAddr, h.client.ID, returnCode)
+		return fmt.Errorf("connection rejected")
+	}
 
 	go h.outgoingWorker()
 
