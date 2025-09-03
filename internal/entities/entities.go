@@ -21,7 +21,7 @@ type Client struct {
 type Message struct {
 	Topic     string
 	Payload   []byte
-	QoS       byte
+	QoS       QoSLevel
 	Retain    bool
 	From      *string
 	Timestamp time.Time

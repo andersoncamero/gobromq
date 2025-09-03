@@ -10,7 +10,7 @@ import (
 	"github/go/gobromq/internal/auth"
 	"github/go/gobromq/internal/connection"
 	"github/go/gobromq/internal/entities"
-	"github/go/gobromq/internal/service"
+	service "github/go/gobromq/internal/services"
 )
 
 type Broker struct {
@@ -19,6 +19,7 @@ type Broker struct {
 	clients     map[string]*entities.Client
 	pubsub      *PubSubEngine
 	authService *service.AuthService
+	qosService  *service.QoSService
 	deliveryCh  chan *entities.Delivery
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -31,13 +32,16 @@ func NewBroker(cfg *config.Config) *Broker {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	authenticator := auth.NewSimpleAuth()
+	authService := service.NewAuthService(authenticator)
+	qosService := service.NewQoSService()
 
 	return &Broker{
 		config:      cfg,
 		listener:    connection.NewListener(cfg.Server.Host, cfg.Server.Port),
 		clients:     make(map[string]*entities.Client),
 		pubsub:      NewPubSubEngine(),
-		authService: service.NewAuthService(authenticator),
+		authService: authService,
+		qosService:  qosService,
 		deliveryCh:  make(chan *entities.Delivery, 10000),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -63,9 +67,10 @@ func (b *Broker) Start() error {
 	go b.connectionWorker()
 	go b.deliveryWorker()
 
-	fmt.Println("GoBroMq broker started successfully")
+	fmt.Println("🚀 GoBroMQ broker started successfully!")
 	fmt.Printf("🔐 Authentication: %s\n",
 		map[bool]string{true: "ENABLED", false: "DISABLED"}[b.config.Auth.Enabled])
+	fmt.Println("📋 QoS Service: ENABLED")
 	return nil
 }
 
@@ -76,10 +81,8 @@ func (b *Broker) Stop() error {
 	if !b.running {
 		return fmt.Errorf("broker is not running")
 	}
-
-	fmt.Println("Stopping GoBroMq broker...")
 	b.cancel()
-
+	b.qosService.Stop()
 	b.listener.Stop()
 	close(b.deliveryCh)
 
@@ -141,25 +144,32 @@ func (b *Broker) AddClient(client *entities.Client) error {
 	return nil
 }
 
-func (b *Broker) RemoveClient(clientID string) {
+func (b *Broker) RemoveClient(clientID string, graceful bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if client, exists := b.clients[clientID]; exists {
+		if graceful {
+			b.TriggerWillMessage(clientID)
+		}
+
 		client.Conn.Close()
 		close(client.OutgoingChan)
 		b.pubsub.UnsubscribeAll(clientID)
+
 		b.authService.RemoveSession(clientID)
+		b.qosService.RemoveSession(clientID)
+
 		delete(b.clients, clientID)
 		fmt.Printf("➖ Client %s removed from broker\n", clientID)
 	}
 }
 
-func (b *Broker) HandlePublish(req *entities.PublishRequest) error {
+func (b *Broker) HandlePublish(req *entities.PublishRequest) (uint16, error) {
 
 	if b.config.Auth.Enabled {
 		if !b.authService.CanPublish(*req.From, string(req.Topic)) {
-			return fmt.Errorf("client %s not authorized to publish to topic %s",
+			return 0, fmt.Errorf("client %s not authorized to publish to topic %s",
 				*req.From, req.Topic)
 		}
 	}
@@ -167,16 +177,31 @@ func (b *Broker) HandlePublish(req *entities.PublishRequest) error {
 	msg := &entities.Message{
 		Topic:     req.Topic,
 		Payload:   req.Payload,
-		QoS:       req.QoS,
+		QoS:       entities.QoSLevel(req.QoS),
 		Retain:    req.Retain,
 		From:      req.From,
 		Timestamp: time.Now(),
+	}
+
+	var packageID uint16
+
+	if req.QoS > 0 {
+		packageID = b.qosService.AddPendingMessage(*req.From, *msg, entities.QoSLevel(req.QoS))
+		if packageID == 0 {
+			return 0, fmt.Errorf("failed to create pending message")
+		}
+
 	}
 
 	deliveries := b.pubsub.Publish(msg)
 	authorizedDeliveries := b.filterAuthorizedDeliveries(deliveries)
 
 	for _, delivery := range authorizedDeliveries {
+
+		if delivery.QoS > 0 {
+			delivery.PacketID = b.qosService.AddPendingMessage(delivery.ClientID, *delivery.Message, entities.QoSLevel(delivery.QoS))
+		}
+
 		select {
 		case b.deliveryCh <- &delivery:
 		default:
@@ -187,7 +212,23 @@ func (b *Broker) HandlePublish(req *entities.PublishRequest) error {
 	fmt.Printf("📤 Published to %s: %d/%d authorized deliveries\n",
 		req.Topic, len(authorizedDeliveries), len(deliveries))
 
-	return nil
+	return packageID, nil
+}
+
+func (b *Broker) HandlePubAck(clientID string, packetID uint16) error {
+	return b.qosService.HandlePubAck(clientID, packetID)
+}
+
+func (b *Broker) HandlePubRec(clientID string, packetID uint16) error {
+	return b.qosService.HandlePubRec(clientID, packetID)
+}
+
+func (b *Broker) HandlePubComp(clientID string, packetID uint16) error {
+	return b.qosService.HandlePubComp(clientID, packetID)
+}
+
+func (b *Broker) GetPendingPubRel(clientID string) []uint16 {
+	return b.qosService.GetPendingPubRel(clientID)
 }
 
 func (b *Broker) HandleSubscribe(req *entities.SubscribeRequest) []byte {
@@ -327,8 +368,44 @@ func (b *Broker) GetStats() map[string]interface{} {
 	b.mu.RLock()
 	defer b.mu.Unlock()
 
-	return map[string]interface{}{
-		"clients":  len(b.clients),
-		"messages": b.pubsub.GetSubscriptions(),
+	stats := map[string]interface{}{
+		"clients":      len(b.clients),
+		"messages":     b.pubsub.GetSubscriptions(),
+		"auth_enabled": b.config.Auth.Enabled,
+		"qos_enabled":  true,
+	}
+
+	if b.config.Auth.Enabled {
+		stats["auth"] = b.authService.GetStats()
+	}
+
+	stats["qos"] = b.qosService.GetStats()
+
+	return stats
+}
+
+func (b *Broker) CreateClientSession(clientID string, cleanSession bool, willMessage *entities.WillMessage) {
+	b.qosService.CreateSession(clientID, cleanSession)
+
+	if willMessage != nil {
+		b.qosService.SetWillMessage(clientID, willMessage)
+	}
+	fmt.Printf("📋 Session created for client %s (clean: %t)\n", clientID, cleanSession)
+}
+
+func (b *Broker) TriggerWillMessage(clientID string) {
+	willMessage := b.qosService.TriggerWillMessage(clientID)
+
+	if willMessage != nil {
+		willReq := &entities.PublishRequest{
+			Topic:   willMessage.Topic,
+			Payload: willMessage.Payload,
+			QoS:     byte(willMessage.QoS),
+			Retain:  willMessage.Retain,
+			From:    &clientID,
+		}
+
+		b.HandlePublish(willReq)
+		fmt.Printf("⚡ Will message published for client %s\n", clientID)
 	}
 }
