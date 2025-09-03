@@ -18,10 +18,16 @@ type Handler struct {
 
 type BrokerInterface interface {
 	AddClient(client *entities.Client) error
-	RemoveClient(clientID string)
-	HandlePublish(req *entities.PublishRequest) error
+	RemoveClient(clientID string, graceful bool)
+	HandlePublish(req *entities.PublishRequest) (uint16, error)
 	HandleSubscribe(req *entities.SubscribeRequest) []byte
 	GetStats() map[string]interface{}
+	AuthenticateClient(clientID string, username, password string) error
+	CreateClientSession(clientID string, cleanSession bool, willMessage *entities.WillMessage)
+	HandlePubAck(clientID string, packetID uint16) error
+	HandlePubRec(clientID string, packetID uint16) error
+	HandlePubComp(clientID string, packetID uint16) error
+	GetPendingPubRel(clientID string) []uint16
 }
 
 func NewHandler(conn net.Conn, broker BrokerInterface) *Handler {
@@ -44,9 +50,6 @@ func (h *Handler) Start() error {
 		fmt.Printf("❌ Error reading first packet from %s: %v\n", remoteAddr, err)
 		return err
 	}
-
-	fmt.Printf("📦 Received %s packet from %s (length: %d)\n",
-		entities.GetPacketTypeName(firstPacket.Type), remoteAddr, firstPacket.Length)
 
 	if firstPacket.Type != entities.CONNECT {
 		fmt.Printf("❌ First packet must be CONNECT, got %s from %s\n",
@@ -83,10 +86,46 @@ func (h *Handler) Start() error {
 		LastSeen:      time.Now(),
 	}
 
+	var authError error
+	var returnCode byte = entities.ConnectAccepted
+
+	if connectPacket.Username != "" || connectPacket.Password != "" {
+		authError = h.broker.AuthenticateClient(h.client.ID, connectPacket.Username, connectPacket.Password)
+		if authError == nil {
+			h.client.Authenticated = true
+			fmt.Printf("🔐 Client %s authenticated successfully\n", h.client.ID)
+		} else {
+			fmt.Printf("🔒 Authentication failed for client %s: %v\n", h.client.ID, authError)
+			returnCode = entities.ConnectRefusedBadCredentials
+		}
+	} else {
+		fmt.Printf("🔓 Client %s attempting anonymous connection\n", h.client.ID)
+	}
+
+	var willMessage *entities.WillMessage
+
+	if connectPacket.WillFlag {
+		willMessage = &entities.WillMessage{
+			Topic:   string(connectPacket.WillTopic),
+			Payload: []byte(connectPacket.WillMessage),
+			QoS:     entities.QoSLevel(connectPacket.WillQoS),
+			Retain:  connectPacket.WillRetain,
+		}
+		fmt.Printf("📄 Will message configured for client %s: topic=%s, QoS=%d\n",
+			h.client.ID, willMessage.Topic, willMessage.QoS)
+	}
+
+	h.broker.CreateClientSession(h.client.ID, connectPacket.CleanSession, willMessage)
+
 	if err := h.broker.AddClient(h.client); err != nil {
 		fmt.Printf("❌ Error adding client to broker: %v\n", err)
 
-		connackData := packet.CreateConnAck(false, entities.ConnectRefusedServerUnavailable)
+		if authError != nil {
+			returnCode = entities.ConnectRefusedBadCredentials
+		} else {
+			returnCode = entities.ConnectRefusedServerUnavailable
+		}
+		connackData := packet.CreateConnAck(false, returnCode)
 		h.parser.WriteResponse(entities.CONNACK, connackData)
 		return err
 	}
@@ -97,9 +136,16 @@ func (h *Handler) Start() error {
 		return err
 	}
 
-	fmt.Printf("📤 CONNACK sent to %s\n", remoteAddr)
+	if returnCode == entities.ConnectAccepted {
+		fmt.Printf("✅ CONNACK sent to %s (client: %s) - Connection accepted\n", remoteAddr, h.client.ID)
+	} else {
+		fmt.Printf("❌ CONNACK sent to %s (client: %s) - Connection rejected (code: %d)\n",
+			remoteAddr, h.client.ID, returnCode)
+		return fmt.Errorf("connection rejected")
+	}
 
 	go h.outgoingWorker()
+	go h.pubrelWorker()
 
 	return h.handlePackets()
 }
@@ -143,6 +189,14 @@ func (h *Handler) handlePacket(pkt *entities.Packet) error {
 		return h.handleDisconnect()
 	case entities.UNSUBSCRIBE:
 		return h.handleUnsubscribe()
+	case entities.PUBACK:
+		return h.handlePubAck(pkt)
+	case entities.PUBREC:
+		return h.handlePubRec(pkt)
+	case entities.PUBREL:
+		return h.handlePubRel(pkt)
+	case entities.PUBCOMP:
+		return h.handlePubComp(pkt)
 	default:
 		return fmt.Errorf("unknown packet type: %s", entities.GetPacketTypeName(pkt.Type))
 	}
@@ -176,19 +230,28 @@ func (h *Handler) handlePublish(pkt *entities.Packet) error {
 		From:    &h.client.ID,
 	}
 
-	if err := h.broker.HandlePublish(pubReq); err != nil {
+	_, err = h.broker.HandlePublish(pubReq)
+
+	if err != nil {
 		fmt.Printf("❌ Error handling publish from client %s: %v\n", h.client.ID, err)
 		return err
 	}
 
-	if publishPacket.QoS == 1 {
+	switch publishPacket.QoS {
+	case 1:
 		pubackData := packet.CreatePubAck(publishPacket.PacketID)
 		if err := h.parser.WriteResponse(entities.PUBACK, pubackData); err != nil {
 			fmt.Printf("❌ Error sending PUBACK to client %s: %v\n", h.client.ID, err)
 			return err
 		}
-
-		fmt.Printf("📤 PUBACK sent to client %s\n", h.client.ID)
+		fmt.Printf("📤 PUBACK sent to client %s (packetID: %d)\n", h.client.ID, publishPacket.PacketID)
+	case 2:
+		pubrecData := packet.CreatePubRec(publishPacket.PacketID)
+		if err := h.parser.WriteResponse(entities.PUBREC, pubrecData); err != nil {
+			fmt.Printf("❌ Error sending PUBREC to client %s: %v\n", h.client.ID, err)
+			return err
+		}
+		fmt.Printf("📤 PUBREC sent to client %s (packetID: %d)\n", h.client.ID, publishPacket.PacketID)
 	}
 
 	return nil
@@ -238,6 +301,84 @@ func (h *Handler) handleUnsubscribe() error {
 	return h.parser.WriteResponse(entities.UNSUBACK, []byte{0x00, 0x00})
 }
 
+func (h *Handler) handlePubAck(pkt *entities.Packet) error {
+	packetID, err := packet.ParseAckPacket(pkt.Data)
+	if err != nil {
+		return fmt.Errorf("error parsing PUBACK: %w", err)
+	}
+
+	fmt.Printf("📨 PUBACK received from client %s (packetID: %d)\n", h.client.ID, packetID)
+
+	return h.broker.HandlePubAck(h.client.ID, packetID)
+}
+
+func (h *Handler) handlePubRec(pkt *entities.Packet) error {
+	packetID, err := packet.ParseAckPacket(pkt.Data)
+	if err != nil {
+		return fmt.Errorf("error parsing PUBREC: %w", err)
+	}
+
+	fmt.Printf("📨 PUBREC received from client %s (packetID: %d)\n", h.client.ID, packetID)
+
+	if err := h.broker.HandlePubRec(h.client.ID, packetID); err != nil {
+		return err
+	}
+
+	pubrelData := packet.CreatePubRel(packetID)
+	if err := h.parser.WriteResponse(entities.PUBREL, pubrelData); err != nil {
+		return fmt.Errorf("error sending PUBREL: %w", err)
+	}
+
+	fmt.Printf("📤 PUBREL sent to client %s (packetID: %d)\n", h.client.ID, packetID)
+	return nil
+}
+
+func (h *Handler) handlePubRel(pkt *entities.Packet) error {
+	packetID, err := packet.ParseAckPacket(pkt.Data)
+	if err != nil {
+		return fmt.Errorf("error parsing PUBREL: %w", err)
+	}
+
+	fmt.Printf("📨 PUBREL received from client %s (packetID: %d)\n", h.client.ID, packetID)
+
+	pubcompData := packet.CreatePubComp(packetID)
+	if err := h.parser.WriteResponse(entities.PUBCOMP, pubcompData); err != nil {
+		return fmt.Errorf("error sending PUBCOMP: %w", err)
+	}
+
+	fmt.Printf("📤 PUBCOMP sent to client %s (packetID: %d)\n", h.client.ID, packetID)
+	return nil
+}
+
+func (h *Handler) handlePubComp(pkt *entities.Packet) error {
+	packetID, err := packet.ParseAckPacket(pkt.Data)
+	if err != nil {
+		return fmt.Errorf("error parsing PUBCOMP: %w", err)
+	}
+
+	fmt.Printf("📨 PUBCOMP received from client %s (packetID: %d)\n", h.client.ID, packetID)
+
+	return h.broker.HandlePubComp(h.client.ID, packetID)
+}
+
+func (h *Handler) pubrelWorker() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		pendingPubRel := h.broker.GetPendingPubRel(h.client.ID)
+
+		for _, packetID := range pendingPubRel {
+			pubrelData := packet.CreatePubRel(packetID)
+			if err := h.parser.WriteResponse(entities.PUBREL, pubrelData); err != nil {
+				fmt.Printf("❌ Error sending PUBREL to client %s: %v\n", h.client.ID, err)
+			} else {
+				fmt.Printf("🔄 PUBREL resent to client %s (packetID: %d)\n", h.client.ID, packetID)
+			}
+		}
+	}
+}
+
 func (h *Handler) outgoingWorker() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -281,7 +422,7 @@ func (h *Handler) sendMessage(delivery *entities.Delivery) error {
 func (h *Handler) cleanup() {
 	if h.client != nil {
 		fmt.Printf("🧹 Cleaning up client %s\n", h.client.ID)
-		h.broker.RemoveClient(h.client.ID)
+		h.broker.RemoveClient(h.client.ID, false)
 	}
 
 	if h.conn != nil {

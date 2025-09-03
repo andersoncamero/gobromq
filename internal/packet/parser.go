@@ -76,9 +76,15 @@ func (p *Parser) WritePacket(packet *entities.Packet) error {
 }
 
 func (p *Parser) WriteResponse(packetType byte, data []byte) error {
+
+	flags := byte(0)
+	if packetType == 0x60 {
+		flags = 0x02
+	}
+
 	packet := &entities.Packet{
 		Type:   packetType,
-		Flags:  0,
+		Flags:  flags,
 		Length: len(data),
 		Data:   data,
 	}

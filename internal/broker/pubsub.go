@@ -86,14 +86,14 @@ func (ps *PubSubEngine) Publish(msg *entities.Message) []entities.Delivery {
 		if ps.topicMatches(subTopic, string(msg.Topic)) {
 			for clientID, subQoS := range subscribers {
 				deliveryQoS := msg.QoS
-				if subQoS < msg.QoS {
-					deliveryQoS = subQoS
+				if entities.QoSLevel(subQoS) < msg.QoS {
+					deliveryQoS = entities.QoSLevel(subQoS)
 				}
 
 				delivery := entities.Delivery{
 					ClientID: clientID,
 					Message:  msg,
-					QoS:      deliveryQoS,
+					QoS:      byte(deliveryQoS),
 				}
 
 				deliveries = append(deliveries, delivery)

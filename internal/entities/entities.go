@@ -21,7 +21,7 @@ type Client struct {
 type Message struct {
 	Topic     string
 	Payload   []byte
-	QoS       byte
+	QoS       QoSLevel
 	Retain    bool
 	From      *string
 	Timestamp time.Time
@@ -52,4 +52,13 @@ type SubscribeRequest struct {
 type TopicQoS struct {
 	Topic string
 	QoS   byte
+}
+
+type AuthenticateSession struct {
+	ClientID    string
+	Username    string
+	Roles       []string
+	Permissions map[string][]string
+	AuthTime    time.Time
+	Active      bool
 }
