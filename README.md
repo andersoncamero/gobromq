@@ -71,6 +71,10 @@
 git clone https://github.com/tu-usuario/gobromq.git
 cd gobromq
 
+# Configurar variables de entorno
+cp .env.example .env
+# Editar .env según tus necesidades
+
 # Descargar dependencias
 go mod tidy
 
@@ -80,6 +84,16 @@ go build -o gobromq ./cmd/gobromq
 # Ejecutar
 ./gobromq
 ```
+
+### Variables de entorno
+
+El proyecto utiliza un archivo `.env` para la configuración. Las variables disponibles son:
+
+| Variable | Descripción | Valor por defecto |
+|----------|-------------|-------------------|
+| `GOBROMQ_PORT` | Puerto del broker MQTT | `1884` |
+| `GOBROMQ_HOST` | Host del broker (vacío = todas las interfaces) | `` |
+| `COMPOSE_PROJECT_NAME` | Nombre del proyecto Docker | `gobromq` |
 
 ### Ejecución desde código fuente
 
