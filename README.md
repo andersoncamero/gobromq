@@ -14,11 +14,15 @@
 - ✅ **PUBLISH/SUBSCRIBE** - Patrón Pub/Sub completamente funcional  
 - ✅ **Topic Matching** - Wildcards `+` (single-level) y `#` (multi-level)
 - ✅ **Retained Messages** - Mensajes persistentes para nuevos suscriptores
-- ✅ **QoS Negotiation** - Cálculo automático del QoS de entrega
+- ✅ **QoS 0, 1 y 2** - Todos los niveles de calidad de servicio implementados
+- ✅ **QoS 2 Flow Control** - PUBREC, PUBREL, PUBCOMP completamente funcional
+- ✅ **Will Messages** - Mensajes automáticos en desconexiones inesperadas
+- ✅ **Session Persistence** - Mantenimiento de suscripciones entre reconexiones
 - ✅ **Authentication** - Sistema de autenticación integrado
 - ✅ **Multiple Clients** - Soporte para miles de conexiones concurrentes
 - ✅ **Clean Architecture** - Código organizado y extensible
 - ✅ **Real-time Routing** - Routing de mensajes en tiempo real entre clientes
+- ✅ **Comprehensive Testing** - Suite de tests con métricas detalladas
 
 ## 🏗️ Arquitectura
 
@@ -97,6 +101,64 @@ go run ./cmd/gobromq
 ```
 
 ## 🧪 Testing
+
+### Suite de Tests Completa
+
+El proyecto incluye una suite de tests exhaustiva para probar todas las capacidades del broker:
+
+#### 1. Tests Básicos (`./tests/simple_tests.sh`)
+- Tests funcionales rápidos (5 escenarios)
+- Verificación de conectividad
+- Tests de QoS
+- Validación de autenticación
+
+#### 2. Tests de Benchmark (`./tests/benchmark_test.sh`)
+- Tests de rendimiento con sensores IoT
+- Simulación de datos JSON realistas
+- Medición de latencia y throughput
+
+#### 3. Test de Tráfico Masivo IoT (`./tests/massive_iot_test.sh`)
+- Simulación de 140 dispositivos IoT
+- 20 zonas de edificio inteligente
+- 25 tipos diferentes de sensores
+
+#### 4. Test Masivo con Métricas Detalladas (`./tests/massive_iot_test_metrics.sh`) ⭐ NUEVO
+- Análisis completo de rendimiento
+- Métricas de tiempo por lote
+- Métricas de tiempo por mensaje  
+- Métricas de tiempo por dispositivo
+- Análisis de throughput detallado
+- **680 mensajes** enviados en lotes concurrentes
+
+### Ejecución Interactiva
+
+```bash
+./tests/run_tests.sh
+```
+
+**Menú interactivo con 7 opciones:**
+- **Opción 1**: Tests básicos (verificación rápida)
+- **Opción 2**: Tests de benchmark (rendimiento)  
+- **Opción 3**: Test masivo IoT (140 dispositivos)
+- **Opción 4**: Test masivo con métricas detalladas ⭐
+- **Opción 5**: Ejecutar todos los tests
+- **Opción 6**: Modo interactivo (shell manual)
+- **Opción 7**: Salir
+
+### Ejemplo de Métricas Detalladas
+
+```
+📊 RESUMEN DE MÉTRICAS
+=====================
+🕒 Tiempo total de ejecución: 28.532s
+📈 Total de mensajes enviados: 680
+⚡ Throughput promedio: 23.8 msg/s
+🏆 Throughput máximo: 50.0 msg/s (Lote 5)
+🐌 Throughput mínimo: 18.2 msg/s (Lote 12)
+📊 Tiempo promedio por lote: 2.378s
+🚀 Lote más rápido: 1.825s (Lote 7)
+🐌 Lote más lento: 3.124s (Lote 11)
+```
 
 ### Con MQTT Explorer (Recomendado)
 
@@ -286,29 +348,62 @@ ping -c 10 localhost
 
 ## 🚧 Roadmap
 
-### ✅ Completado (Fase 1)
+### ✅ **Fase 1: Broker básico con CONNECT/PUBLISH/SUBSCRIBE** - **COMPLETADA**
 - [x] **Estructura del proyecto** con Clean Architecture
 - [x] **TCP Listener** funcional con gestión de conexiones
 - [x] **MQTT Parser** completo (CONNECT, PUBLISH, SUBSCRIBE, PING, DISCONNECT)
 - [x] **Pub/Sub Engine** con topic matching y retained messages
 - [x] **Sistema de autenticación** básico
 
-### 🔄 En progreso (Fase 2)
-- [ ] **Autorización granular** por tópicos y permisos
-- [ ] **Will messages** para clientes desconectados inesperadamente
-- [ ] **Session persistence** para clean sessions
-- [ ] **Métricas y monitoring** en tiempo real
+### ✅ **Fase 2: QoS completo y persistencia básica** - **COMPLETADA**
+- [x] **QoS 0, 1 y 2** - Todos los niveles implementados
+- [x] **QoS 2 Flow Control** - PUBREC, PUBREL, PUBCOMP funcional
+- [x] **PUBACK/PUBREC/PUBREL/PUBCOMP** - Flujo completo implementado
+- [x] **Retained Messages** - Persistencia básica de mensajes
+- [x] **Session persistence** para clean sessions
+- [x] **Will messages** para clientes desconectados inesperadamente
 
-### 📋 Pendiente (Fase 3+)
-- [ ] **QoS 1 y 2** completos (PUBACK, PUBREC, PUBREL, PUBCOMP)
+### 🔄 **Fase 3: WebSocket support y TLS** - **PENDIENTE**
 - [ ] **TLS/SSL** support para conexiones seguras
 - [ ] **WebSocket** support (MQTT over WebSockets)
-- [ ] **Docker & Docker Compose** para deployment
+- [ ] **Certificados** y configuración SSL
+
+### ✅ **Fase 4: Métricas y dashboard web** - **PARCIALMENTE COMPLETADA**
+- [x] **Métricas detalladas** en tests - Sistema completo implementado
+- [x] **Estadísticas básicas** del broker - `GetStats()` funcional
+- [x] **Suite de tests exhaustiva** - 680 mensajes, análisis de throughput
+- [ ] **Dashboard web** de administración
+- [ ] **REST API** para gestión remota
+- [ ] **Métricas en tiempo real** con WebSocket
+
+### 📋 **Fase 5: Clustering y alta disponibilidad** - **PENDIENTE**
+
+- [ ] **Clustering** para alta disponibilidad
+- [ ] **Load balancing** entre nodos
+- [ ] **Failover** automático
+- [ ] **Replicación** de datos entre nodos
+
+## 🎯 **Próximos Pasos Recomendados**
+
+### **Prioridad Alta (Iniciar Fase 3)**
+1. **TLS Support**: Conexiones seguras con certificados SSL/TLS
+2. **WebSocket Support**: MQTT sobre WebSockets para aplicaciones web
+
+### **Prioridad Media (Completar Fase 4)**  
+3. **Dashboard Web**: Interface de administración visual
+4. **REST API**: Gestión remota del broker y estadísticas
+5. **Métricas en tiempo real**: Monitoring con WebSockets
+
+### **Prioridad Baja (Iniciar Fase 5)**
+6. **Docker Support**: Containerización para deployment fácil
+7. **Unit Tests**: Coverage completo > 80%
+8. **Clustering**: Alta disponibilidad y load balancing
+
+## 📋 Pendiente (Fase 3+)
+- [ ] **Docker & Docker Compose** para deployment fácil
 - [ ] **Unit tests** completos con coverage > 80%
 - [ ] **Benchmarks** automatizados de performance
-- [ ] **Clustering** para alta disponibilidad
-- [ ] **REST API** para administración
-- [ ] **Dashboard web** de monitoring
+- [ ] **Autorización granular** por tópicos y permisos
 
 ## 🧪 Testing y Calidad
 

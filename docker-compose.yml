@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # GoBroMQ Broker
+  gobromq:
+    build: .
+    container_name: gobromq_broker
+    ports:
+      - "1884:1884"
+      - "8080:8080"  # Puerto para métricas/API (futuro)
+    environment:
+      - GOBROMQ_PORT=1884
+      - GOBROMQ_HOST=0.0.0.0
+    volumes:
+      - broker_data:/data
+    networks:
+      - mqtt_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1884"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Cliente de prueba MQTT (opcional)
+  mqtt_test_client:
+    image: eclipse-mosquitto:latest
+    container_name: mqtt_test_client
+    depends_on:
+      gobromq:
+        condition: service_healthy
+    command: 
+      - sh
+      - -c
+      - |
+        echo '🧪 Iniciando cliente de pruebas MQTT...'
+        echo '📡 Suscribiendo a topic test/#'
+        mosquitto_sub -h gobromq -p 1884 -u admin -P password123 -t 'test/#' -v
+    networks:
+      - mqtt_network
+    profiles:
+      - testing
+
+volumes:
+  broker_data:
+    driver: local
+
+networks:
+  mqtt_network:
+    driver: bridge
